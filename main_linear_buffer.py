@@ -17,21 +17,29 @@ import torch.backends.cudnn as cudnn
 
 from main_ce_buffer import set_loader
 from util import AverageMeter
-from util import adjust_learning_rate, warmup_learning_rate, accuracy
+from util import adjust_learning_rate, warmup_learning_rate, accuracy, set_random_seed
 from util import set_optimizer
 
 from networks.resnet_big import SupConResNet, LinearClassifier
 from torch.utils.tensorboard import SummaryWriter
 
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
+import wandb
+
+# try:
+#     import apex
+#     from apex import amp, optimizers
+# except ImportError:
+#     pass
 
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
+
+    parser.add_argument('--seed', type=int, default=0, help='random seed')
+    
+    parser.add_argument('--notes', type=str, default='')
+    
+    parser.add_argument('--mode', type=str, default='linear_eval', choices=['train', 'linear_eval'])
 
     parser.add_argument('--target_task', type=int, default=0, help='Use all classes if None else learned tasks so far')
 
@@ -61,7 +69,7 @@ def parse_option():
     # model dataset
     parser.add_argument('--model', type=str, default='resnet18')
     parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'tiny-imagenet'], help='dataset')
+                        choices=['cifar10', 'cifar100', 'tiny-imagenet'], help='dataset')
     parser.add_argument('--size', type=int, default=32)
 
     # other setting
@@ -69,16 +77,25 @@ def parse_option():
                         help='using cosine annealing')
     parser.add_argument('--warm', action='store_true',
                         help='warm-up for large batch training')
+    parser.add_argument('--trial', type=str, default='0',
+                        help='id for recording multiple runs')
 
     parser.add_argument('--ckpt', type=str, default='',
                         help='path to pre-trained model')
     parser.add_argument('--logpt', type=str, default='',
                         help='path to pre-trained model')
 
+    # wandb
+    parser.add_argument('--wandb_project', type=str, default='Co2L')
+    parser.add_argument('--wandb_entity', type=str, default='laymond1')
+    parser.add_argument('--nowand', default=0, choices=[0, 1], type=int, help='Inhibit wandb logging')
+    parser.add_argument('--debug_mode', type=int, default=0, help='Run only a few forward steps per epoch')         
+
     opt = parser.parse_args()
 
     # set the path according to the environment
     opt.data_folder = '~/data/'
+    opt.trial = opt.seed
 
     opt.tb_folder = os.path.join(opt.ckpt, 'tensorboard', 'linear_eval')
 
@@ -110,6 +127,10 @@ def parse_option():
         opt.n_cls = 10
         opt.cls_per_task = 2
         opt.size = 32
+    elif opt.dataset == 'cifar100':
+        opt.n_cls = 100
+        opt.cls_per_task = 10
+        opt.size = 32
     elif opt.dataset == 'tiny-imagenet':
         opt.n_cls = 200
         opt.cls_per_task = 20
@@ -134,14 +155,14 @@ def set_model(opt, cls_num_list):
     state_dict = ckpt['model']
 
     if torch.cuda.is_available():
-        if torch.cuda.device_count() > 1:
-            model.encoder = torch.nn.DataParallel(model.encoder)
-        else:
-            new_state_dict = {}
-            for k, v in state_dict.items():
-                k = k.replace("module.", "")
-                new_state_dict[k] = v
-            state_dict = new_state_dict
+    #     if torch.cuda.device_count() > 1:
+    #         model.encoder = torch.nn.DataParallel(model.encoder)
+    #     else:
+    #         new_state_dict = {}
+    #         for k, v in state_dict.items():
+    #             k = k.replace("module.", "")
+    #             new_state_dict[k] = v
+    #         state_dict = new_state_dict
         model = model.cuda()
         classifier = classifier.cuda()
         criterion = criterion.cuda()
@@ -204,6 +225,9 @@ def train(train_loader, model, classifier, criterion, optimizer, epoch, opt):
                   'Acc@1 {top1:.3f}'.format(
                    epoch, idx + 1, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, top1=acc/cnt*100.))
+            # wandb log
+            if not opt.nowand:
+                wandb.log({'running_train_loss': losses.avg, 'running_train_acc': acc/cnt*100.})
             sys.stdout.flush()
 
     return losses.avg, acc/cnt*100.
@@ -261,6 +285,11 @@ def validate(val_loader, model, classifier, criterion, opt):
                       'Acc@1 {top1:.3f} {task_il:.3f}'.format(
                        idx, len(val_loader), batch_time=batch_time,
                        loss=losses, top1=np.sum(corr)/np.sum(cnt)*100., task_il=correct_task/np.sum(cnt)*100.))
+                # wandb log
+                if not opt.nowand:
+                    wandb.log({'running_valid_loss': losses.avg, 
+                               'running_class_Acc': np.sum(corr)/np.sum(cnt)*100.,
+                               'running_task_Acc': correct_task/np.sum(cnt)*100.})
 
     print(' * Acc@1 {top1:.3f} {task_il:.3f}'.format(top1=np.sum(corr)/np.sum(cnt)*100., task_il=correct_task/np.sum(cnt)*100.))
     return losses.avg, top1.avg, corr, cnt, correct_task/np.sum(cnt)*100.
@@ -270,6 +299,13 @@ def main():
     best_acc = 0
     task_acc = 0
     opt = parse_option()
+    
+    set_random_seed(opt.seed)
+    
+    if not opt.nowand:
+        assert wandb is not None, "Wandb not installed, please install it or run without wandb"
+        wandb.init(project=opt.wandb_project, entity=opt.wandb_entity, config=vars(opt))
+        opt.wandb_url = wandb.run.get_url()
 
     if opt.target_task is not None:
         if opt.target_task == 0:
@@ -314,6 +350,8 @@ def main():
             if c > 0:
                 val_acc_stats[str(cls)] = cr / c * 100.
         writer.add_scalars('val_acc', val_acc_stats, epoch)
+        if not opt.nowand:
+            wandb.log({f'val_acc_{k}': v for k, v in val_acc_stats if k != '_timestamp'}, step=epoch)
 
     with open(os.path.join(opt.origin_ckpt, 'acc_buffer_{}.txt'.format(opt.target_task)), 'w') as f:
         out = 'best accuracy: {:.2f}\n'.format(best_acc)

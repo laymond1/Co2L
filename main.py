@@ -45,6 +45,8 @@ def parse_option():
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     
     parser.add_argument('--notes', type=str, default='')
+    
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'linear_eval'])
 
     parser.add_argument('--target_task', type=int, default=0)
 
