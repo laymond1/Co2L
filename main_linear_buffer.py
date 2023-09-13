@@ -351,7 +351,7 @@ def main():
                 val_acc_stats[str(cls)] = cr / c * 100.
         writer.add_scalars('val_acc', val_acc_stats, epoch)
         if not opt.nowand:
-            wandb.log({f'val_acc_{k}': v for k, v in val_acc_stats.items() if k != '_timestamp'}, step=epoch)
+            wandb.log({f'val_acc_{k}': v for k, v in val_acc_stats.items() if k != '_timestamp'})
 
     with open(os.path.join(opt.origin_ckpt, 'acc_buffer_{}.txt'.format(opt.target_task)), 'w') as f:
         out = 'best accuracy: {:.2f}\n'.format(best_acc)
