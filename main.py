@@ -15,7 +15,7 @@ import math
 import random
 import numpy as np
 
-import tensorboard_logger as tb_logger
+# import tensorboard_logger as tb_logger
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,20 +26,25 @@ from torch.utils.data import Subset, Dataset
 from datasets import TinyImagenet
 from util import TwoCropTransform, AverageMeter
 from util import adjust_learning_rate, warmup_learning_rate
-from util import set_optimizer, save_model, load_model
+from util import set_optimizer, save_model, load_model, set_random_seed
 from networks.resnet_big import SupConResNet
 from losses_negative_only import SupConLoss
 
+import wandb
 
-try:
-    import apex
-    from apex import amp, optimizers
-except ImportError:
-    pass
+# try:
+#     import apex
+#     from apex import amp, optimizers
+# except ImportError:
+#     pass
 
 
 def parse_option():
     parser = argparse.ArgumentParser('argument for training')
+
+    parser.add_argument('--seed', type=int, default=0, help='random seed')
+    
+    parser.add_argument('--notes', type=str, default='')
 
     parser.add_argument('--target_task', type=int, default=0)
 
@@ -88,7 +93,7 @@ def parse_option():
     # model dataset
     parser.add_argument('--model', type=str, default='resnet18')
     parser.add_argument('--dataset', type=str, default='cifar10',
-                        choices=['cifar10', 'tiny-imagenet', 'path'], help='dataset')
+                        choices=['cifar10', 'cifar100', 'tiny-imagenet', 'path'], help='dataset')
     parser.add_argument('--mean', type=str, help='mean of dataset in path in form of str tuple')
     parser.add_argument('--std', type=str, help='std of dataset in path in form of str tuple')
     parser.add_argument('--data_folder', type=str, default=None, help='path to custom dataset')
@@ -108,15 +113,26 @@ def parse_option():
                         help='warm-up for large batch training')
     parser.add_argument('--trial', type=str, default='0',
                         help='id for recording multiple runs')
+    
+    # wandb
+    parser.add_argument('--wandb_project', type=str, default='Co2L')
+    parser.add_argument('--wandb_entity', type=str, default='laymond1')
+    parser.add_argument('--nowand', default=0, choices=[0, 1], type=int, help='Inhibit wandb logging')
+    parser.add_argument('--debug_mode', type=int, default=0, help='Run only a few forward steps per epoch')                            
 
     opt = parser.parse_args()
 
     opt.save_freq = opt.epochs // 2
+    opt.trial = opt.seed
 
 
     if opt.dataset == 'cifar10':
         opt.n_cls = 10
         opt.cls_per_task = 2
+        opt.size = 32
+    elif opt.dataset == 'cifar100':
+        opt.n_cls = 100
+        opt.cls_per_task = 10
         opt.size = 32
     elif opt.dataset == 'tiny-imagenet':
         opt.n_cls = 200
@@ -183,6 +199,9 @@ def parse_option():
     if not os.path.isdir(opt.log_folder):
         os.makedirs(opt.log_folder)
 
+    if opt.debug_mode:
+        opt.nowand = 1
+
     return opt
 
 
@@ -208,6 +227,13 @@ def set_replay_samples(opt, model, prev_indices=None):
     if opt.dataset == 'cifar10':
         subset_indices = []
         val_dataset = datasets.CIFAR10(root=opt.data_folder,
+                                         transform=val_transform,
+                                         download=True)
+        val_targets = np.array(val_dataset.targets)
+
+    elif opt.dataset == 'cifar100':
+        subset_indices = []
+        val_dataset = datasets.CIFAR100(root=opt.data_folder,
                                          transform=val_transform,
                                          download=True)
         val_targets = np.array(val_dataset.targets)
@@ -281,6 +307,9 @@ def set_loader(opt, replay_indices):
     if opt.dataset == 'cifar10':
         mean = (0.4914, 0.4822, 0.4465)
         std = (0.2023, 0.1994, 0.2010)
+    elif opt.dataset == 'cifar100':
+        mean = (0.5071, 0.4867, 0.4408)
+        std = (0.2675, 0.2565, 0.2761)
     elif opt.dataset == 'tiny-imagenet':
         mean = (0.4802, 0.4480, 0.3975)
         std = (0.2770, 0.2691, 0.2821)
@@ -324,6 +353,22 @@ def set_loader(opt, replay_indices):
         print('Dataset size: {}'.format(len(subset_indices)))
         uk, uc = np.unique(np.array(_train_dataset.targets)[subset_indices], return_counts=True)
         print(uc[np.argsort(uk)])
+        
+    elif opt.dataset == 'cifar100':
+        subset_indices = []
+        _train_dataset = datasets.CIFAR100(root=opt.data_folder,
+                                           transform=TwoCropTransform(train_transform),
+                                           download=True)
+        for tc in target_classes:
+            target_class_indices = np.where(np.array(_train_dataset.targets) == tc)[0]
+            subset_indices += np.where(np.array(_train_dataset.targets) == tc)[0].tolist()
+        
+        subset_indices += replay_indices
+        
+        train_dataset =  Subset(_train_dataset, subset_indices)
+        print('Dataset size: {}'.format(len(subset_indices)))
+        uk, uc = np.unique(np.array(_train_dataset.targets)[subset_indices], return_counts=True)
+        print(uc[np.argsort(uk)])    
 
     elif opt.dataset == 'tiny-imagenet':
         subset_indices = []
@@ -354,7 +399,22 @@ def set_loader(opt, replay_indices):
 
     return train_loader, subset_indices
 
-
+def convert_syncbn_model(module):
+    '''Converts all BatchNorm layers in the model to SyncBatchNorm layers.
+    
+    Args:
+        module (nn.Module): The PyTorch nn.Module which contains the model.
+    
+    Returns:
+        nn.Module: The modified model with BatchNorm layers replaced by SyncBatchNorm layers.
+    '''
+    # 재귀적으로 모든 하위 모듈에 대해 SyncBatchNorm으로 교체
+    for child_name, child in module.named_children():
+        if isinstance(child, nn.modules.batchnorm._BatchNorm):
+            setattr(module, child_name, nn.SyncBatchNorm(child.num_features, child.eps, child.momentum, child.affine, child.track_running_stats))
+        else:
+            convert_syncbn_model(child)
+    return module
 
 def set_model(opt):
     model = SupConResNet(name=opt.model)
@@ -362,7 +422,8 @@ def set_model(opt):
 
     # enable synchronized Batch Normalization
     if opt.syncBN:
-        model = apex.parallel.convert_syncbn_model(model)
+        # model = apex.parallel.convert_syncbn_model(model)
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
 
     if torch.cuda.is_available():
         if torch.cuda.device_count() > 1:
@@ -387,6 +448,8 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
 
     end = time.time()
     for idx, (images, labels) in enumerate(train_loader):
+        if opt.debug_mode and idx > 3:
+            break
         data_time.update(time.time() - end)
 
         images = torch.cat([images[0], images[1]], dim=0)
@@ -463,6 +526,9 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
                   'loss {loss.val:.3f} ({loss.avg:.3f} {distill.avg:.3f})'.format(
                    epoch, idx + 1, len(train_loader), batch_time=batch_time,
                    data_time=data_time, loss=losses, distill=distill))
+            # wandb log
+            if not opt.nowand:
+                wandb.log({'total_loss': losses.avg, 'distill_los': distill.avg})
             sys.stdout.flush()
 
     return losses.avg, model2
@@ -470,6 +536,13 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
 
 def main():
     opt = parse_option()
+    
+    set_random_seed(opt.seed)
+    
+    if not opt.nowand:
+        assert wandb is not None, "Wandb not installed, please install it or run without wandb"
+        wandb.init(project=opt.wandb_project, entity=opt.wandb_entity, config=vars(opt))
+        opt.wandb_url = wandb.run.get_url()
 
     target_task = opt.target_task
 
@@ -495,7 +568,7 @@ def main():
         print(len(replay_indices))
 
     # tensorboard
-    logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
+    # logger = tb_logger.Logger(logdir=opt.tb_folder, flush_secs=2)
 
     original_epochs = opt.epochs
 
@@ -546,8 +619,11 @@ def main():
             print('epoch {}, total time {:.2f}'.format(epoch, time2 - time1))
 
             # tensorboard logger
-            logger.log_value('loss_{target_task}'.format(target_task=target_task), loss, epoch)
-            logger.log_value('learning_rate_{target_task}'.format(target_task=target_task), optimizer.param_groups[0]['lr'], epoch)
+            # logger.log_value('loss_{target_task}'.format(target_task=target_task), loss, epoch)
+            # logger.log_value('learning_rate_{target_task}'.format(target_task=target_task), optimizer.param_groups[0]['lr'], epoch)
+            if not opt.nowand:
+                wandb.log({'Epoch_loss_{target_task}'.format(target_task=target_task): loss})
+                wandb.log({'learning_rate_{target_task}'.format(target_task=target_task): optimizer.param_groups[0]['lr']})
 
         # save the last model
         save_file = os.path.join(
