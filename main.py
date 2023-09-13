@@ -46,7 +46,7 @@ def parse_option():
     
     parser.add_argument('--notes', type=str, default='')
     
-    parser.add_argument('--mode', type=str, default='train', choices=['train', 'linear_eval'])
+    parser.add_argument('--mode', type=str, default='train', choices=['train', 'linear_eval', 'linear_all'])
 
     parser.add_argument('--target_task', type=int, default=0)
 
@@ -153,24 +153,25 @@ def parse_option():
     # set the path according to the environment
     if opt.data_folder is None:
         opt.data_folder = '~/data/'
-    opt.model_path = './save_{}_{}/{}_models'.format(opt.replay_policy, opt.mem_size, opt.dataset)
-    opt.tb_path = './save_{}_{}/{}_tensorboard'.format(opt.replay_policy, opt.mem_size, opt.dataset)
-    opt.log_path = './save_{}_{}/logs'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.model_path = './save_{}_{}/{}_models/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
+    opt.tb_path = './save_{}_{}/{}_tensorboard/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
+    opt.log_path = './save_{}_{}/logs/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_{}_{}_{}_{}_{}'.\
-        format(opt.dataset, opt.size, opt.model, opt.learning_rate,
-               opt.weight_decay, opt.batch_size, opt.temp,
-               opt.trial,
-               opt.start_epoch if opt.start_epoch is not None else opt.epochs, opt.epochs,
-               opt.current_temp,
-               opt.past_temp,
-               opt.distill_power
-               )
+    # opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_{}_{}_{}_{}_{}'.\
+    #     format(opt.dataset, opt.size, opt.model, opt.learning_rate,
+    #            opt.weight_decay, opt.batch_size, opt.temp,
+    #            opt.trial,
+    #            opt.start_epoch if opt.start_epoch is not None else opt.epochs, opt.epochs,
+    #            opt.current_temp,
+    #            opt.past_temp,
+    #            opt.distill_power
+    #            )
+    opt.model_name = opt.notes
 
     if opt.cosine:
         opt.model_name = '{}_cosine'.format(opt.model_name)
@@ -189,9 +190,9 @@ def parse_option():
         else:
             opt.warmup_to = opt.learning_rate
 
-    opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
-    if not os.path.isdir(opt.tb_folder):
-        os.makedirs(opt.tb_folder)
+    # opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
+    # if not os.path.isdir(opt.tb_folder):
+    #     os.makedirs(opt.tb_folder)
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):

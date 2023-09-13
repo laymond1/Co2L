@@ -6,6 +6,7 @@ https://github.com/HobbitLong/SupContrast/blob/master/main_linear.py
 from __future__ import print_function
 
 import os
+import re
 import sys
 import argparse
 import time
@@ -39,7 +40,7 @@ def parse_option():
     
     parser.add_argument('--notes', type=str, default='')
     
-    parser.add_argument('--mode', type=str, default='linear_eval', choices=['train', 'linear_eval'])
+    parser.add_argument('--mode', type=str, default='linear_eval', choices=['train', 'linear_eval', 'linear_all'])
 
     parser.add_argument('--target_task', type=int, default=0, help='Use all classes if None else learned tasks so far')
 
@@ -138,7 +139,8 @@ def parse_option():
     else:
         raise ValueError('dataset not supported: {}'.format(opt.dataset))
 
-
+    # log mem_size for wandb
+    opt.mem_size = int(re.search(r'save_random_(\d+)', opt.ckpt).group(1))
 
     opt.origin_ckpt = opt.ckpt
     opt.ckpt = os.path.join(opt.ckpt, 'last_random_{target_task}.pth'.format(target_task=opt.target_task))
@@ -351,6 +353,7 @@ def main():
                 val_acc_stats[str(cls)] = cr / c * 100.
         writer.add_scalars('val_acc', val_acc_stats, epoch)
         if not opt.nowand:
+            wandb.log({'val_acc_mean': val_acc, 'task_acc_mean': task_acc})
             wandb.log({f'val_acc_{k}': v for k, v in val_acc_stats.items() if k != '_timestamp'})
 
     with open(os.path.join(opt.origin_ckpt, 'acc_buffer_{}.txt'.format(opt.target_task)), 'w') as f:
@@ -364,7 +367,7 @@ def main():
         f.write(out)
 
     save_file = os.path.join(
-        opt.origin_ckpt, 'linear_{target_task}.pth'.format(target_task=opt.target_task))
+        opt.origin_ckpt, 'linear_eval_{target_task}.pth'.format(target_task=opt.target_task))
     print('==> Saving...'+save_file)
     torch.save({
         'opt': opt,
