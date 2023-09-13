@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import math
 import numpy as np
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -113,3 +114,18 @@ def load_model(model, optimizer, save_file):
     del loaded
 
     return model, optimizer
+
+
+def set_random_seed(seed: int) -> None:
+    """
+    Sets the seeds at a certain value.
+    :param seed: the value to be set
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    try:
+        torch.cuda.manual_seed_all(seed)
+    except:
+        print('Could not set cuda seed.')
+        pass
