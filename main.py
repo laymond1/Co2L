@@ -153,9 +153,9 @@ def parse_option():
     # set the path according to the environment
     if opt.data_folder is None:
         opt.data_folder = '~/data/'
-    opt.model_path = './save_{}_{}/{}_models/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
-    opt.tb_path = './save_{}_{}/{}_tensorboard/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
-    opt.log_path = './save_{}_{}/logs/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset, opt.mode)
+    opt.model_path = './save_{}_{}/{}_models/'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.tb_path = './save_{}_{}/{}_tensorboard/'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.log_path = './save_{}_{}/logs/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset)
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
