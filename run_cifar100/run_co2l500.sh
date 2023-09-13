@@ -1,0 +1,4 @@
+# Co2L
+CUDA_VISIBLE_DEVICES=0 python main.py --seed 0 --notes co2l500_1 --batch_size 512 --model resnet18 --dataset cifar100 --mem_size 500 --epochs 100 --start_epoch 100 --learning_rate 0.5 --temp 0.5 --current_temp 0.2 --past_temp 0.01  --cosine --wandb_project Co2L
+
+python main_linear_buffer.py --learning_rate 1 --target_task 4 --ckpt ./save_random_500/cifar100_models/cifar100_32_resnet18_lr_0.5_decay_0.0001_bsz_512_temp_0.5_momentum_1.000_trial_0_500_100_0.2_0.01_1.0_cosine_warm/ --logpt ./save_random_500/logs/cifar100_32_resnet18_lr_0.5_decay_0.0001_bsz_512_temp_0.5_momentum_1.000_trial_0_100_100_0.2_0.01_1.0_cosine_warm/
