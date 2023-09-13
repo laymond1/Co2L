@@ -22,6 +22,9 @@ def set_loader(opt, replay_indices):
     if opt.dataset == 'cifar10':
         mean = (0.4914, 0.4822, 0.4465)
         std = (0.2023, 0.1994, 0.2010)
+    elif opt.dataset == 'cifar100':
+        mean = (0.5071, 0.4867, 0.4408)
+        std = (0.2675, 0.2565, 0.2761)
     elif opt.dataset == 'tiny-imagenet':
         mean = (0.4802, 0.4480, 0.3975)
         std = (0.2770, 0.2691, 0.2821)
@@ -73,6 +76,35 @@ def set_loader(opt, replay_indices):
 
         subset_indices = []
         _val_dataset = datasets.CIFAR10(root=opt.data_folder,
+                                       train=False,
+                                       transform=val_transform)
+        for tc in target_classes:
+            subset_indices += np.where(np.array(_val_dataset.targets) == tc)[0].tolist()
+        val_dataset =  Subset(_val_dataset, subset_indices)
+
+    elif opt.dataset == 'cifar100':
+        subset_indices = []
+        _train_dataset = datasets.CIFAR100(root=opt.data_folder,
+                                           transform=train_transform,
+                                           download=True)
+        
+        _train_targets = np.array(_train_dataset.targets)
+        for tc in range(opt.target_task*opt.cls_per_task, (opt.target_task+1)*opt.cls_per_task):
+            subset_indices += np.where(np.array(_train_dataset.targets) == tc)[0].tolist()
+        subset_indices += replay_indices.tolist()
+
+        ut, uc = np.unique(_train_targets[subset_indices], return_counts=True)
+        print(ut)
+        print(uc)
+        
+        weights = np.array([0.] * len(subset_indices))
+        for t, c in zip(ut, uc):
+            weights[_train_targets[subset_indices] == t] = 1./c
+
+        train_dataset =  Subset(_train_dataset, subset_indices)
+
+        subset_indices = []
+        _val_dataset = datasets.CIFAR100(root=opt.data_folder,
                                        train=False,
                                        transform=val_transform)
         for tc in target_classes:
