@@ -467,7 +467,7 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
         neg_images0 = partial_mixup(input=images[0], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
         neg_images1 = partial_mixup(input=images[1], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
         images[0], images[1] = torch.cat([images[0], neg_images0], dim=0), torch.cat([images[1], neg_images1], dim=0)
-        neg_labels = torch.ones(labels.size(0), dtype=torch.long).fill_(
+        neg_labels = torch.ones(neg_images0.size(0), dtype=torch.long).fill_(
             (opt.target_task+1) * opt.cls_per_task
             )
         labels = torch.cat([labels, neg_labels], dim=0)
