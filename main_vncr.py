@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import os
 import copy
+import re
 import sys
 import argparse
 import shutil
@@ -117,7 +118,9 @@ def parse_option():
     opt = parser.parse_args()
 
     opt.save_freq = opt.epochs // 2
+    # detail setting
     opt.trial = opt.seed
+    opt.method = re.search(r'^(.*?)\d+_\d', opt.notes).group(1)
 
 
     if opt.dataset == 'cifar10':

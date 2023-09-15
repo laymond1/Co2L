@@ -441,6 +441,19 @@ def set_model(opt):
     return model, criterion
 
 
+def partial_mixup_exclusive(input: torch.Tensor,
+                  gamma: float,
+                  indices: torch.Tensor,
+                  diff_indices: torch.Tensor
+                  ) -> torch.Tensor:
+    if input.size(0) != indices.size(0):
+        raise RuntimeError("Size mismatch!")
+
+    # MixUp을 적용할 데이터 선택 (서로 다른 클래스끼리만)
+    perm_input = input[indices][diff_indices]
+    return input[diff_indices].mul(gamma).add(perm_input, alpha=1 - gamma)
+
+
 def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
 
 
@@ -458,11 +471,27 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
             break
         data_time.update(time.time() - end)
 
+        # virtual negative samples
+        # 데이터를 서로 다른 클래스의 데이터와 MixUp하기 위한 인덱스 생성
+        permuted_indices = torch.randperm(images[0].size(0))
+        diff_class_indices = labels != labels[permuted_indices]
+        neg_images0 = partial_mixup_exclusive(input=images[0], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
+        neg_images1 = partial_mixup_exclusive(input=images[1], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
+        images[0], images[1] = torch.cat([images[0], neg_images0], dim=0), torch.cat([images[1], neg_images1], dim=0)
+        neg_labels = torch.ones(neg_images0.size(0), dtype=torch.long).fill_(
+            (opt.target_task+1) * opt.cls_per_task
+            )
+        labels = torch.cat([labels, neg_labels], dim=0)
+
         images = torch.cat([images[0], images[1]], dim=0)
         if torch.cuda.is_available():
             images = images.cuda(non_blocking=True)
             labels = labels.cuda(non_blocking=True)
         bsz = labels.shape[0]
+
+        with torch.no_grad():
+            prev_task_mask = labels < opt.target_task * opt.cls_per_task
+            prev_task_mask = prev_task_mask.repeat(2)
 
         # warm-up learning rate
         warmup_learning_rate(opt, epoch, idx, len(train_loader), optimizer)
@@ -470,10 +499,41 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
         # compute loss
         features, encoded = model(images, return_feat=True)
 
+        # IRD (current)
+        if opt.target_task > 0:
+            features1_prev_task = features
+
+            features1_sim = torch.div(torch.matmul(features1_prev_task, features1_prev_task.T), opt.current_temp)
+            logits_mask = torch.scatter(
+                torch.ones_like(features1_sim),
+                1,
+                torch.arange(features1_sim.size(0)).view(-1, 1).cuda(non_blocking=True),
+                0
+            )
+            logits_max1, _ = torch.max(features1_sim * logits_mask, dim=1, keepdim=True)
+            features1_sim = features1_sim - logits_max1.detach()
+            row_size = features1_sim.size(0)
+            logits1 = torch.exp(features1_sim[logits_mask.bool()].view(row_size, -1)) / torch.exp(features1_sim[logits_mask.bool()].view(row_size, -1)).sum(dim=1, keepdim=True)
+
         # Asym SupCon
         f1, f2 = torch.split(features, [bsz, bsz], dim=0)
         features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
         loss = criterion(features, labels, target_labels=list(range(opt.target_task*opt.cls_per_task, (opt.target_task+1)*opt.cls_per_task)))
+
+        # IRD (past)
+        if opt.target_task > 0:
+            with torch.no_grad():
+                features2_prev_task = model2(images)
+
+                features2_sim = torch.div(torch.matmul(features2_prev_task, features2_prev_task.T), opt.past_temp)
+                logits_max2, _ = torch.max(features2_sim*logits_mask, dim=1, keepdim=True)
+                features2_sim = features2_sim - logits_max2.detach()
+                logits2 = torch.exp(features2_sim[logits_mask.bool()].view(row_size, -1)) /  torch.exp(features2_sim[logits_mask.bool()].view(row_size, -1)).sum(dim=1, keepdim=True)
+
+
+            loss_distill = (-logits2 * torch.log(logits1)).sum(1).mean()
+            loss += opt.distill_power * loss_distill
+            distill.update(loss_distill.item(), bsz)
 
         # update metric
         losses.update(loss.item(), bsz)

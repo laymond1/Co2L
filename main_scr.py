@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import os
 import copy
+import re
 import sys
 import argparse
 import shutil
@@ -46,6 +47,8 @@ def parse_option():
     parser.add_argument('--seed', type=int, default=0, help='random seed')
     
     parser.add_argument('--notes', type=str, default='')
+    
+    parser.add_argument('--method', type=str, default='scr')
 
     parser.add_argument('--target_task', type=int, default=0)
 
@@ -116,7 +119,9 @@ def parse_option():
     opt = parser.parse_args()
 
     opt.save_freq = opt.epochs // 2
+    # detail setting
     opt.trial = opt.seed
+    opt.method = re.search(r'^(.*?)\d+_\d', opt.notes).group(1)
 
 
     if opt.dataset == 'cifar10':
@@ -144,24 +149,25 @@ def parse_option():
     # set the path according to the environment
     if opt.data_folder is None:
         opt.data_folder = '~/data/'
-    opt.model_path = './save_{}_{}/{}_models'.format(opt.replay_policy, opt.mem_size, opt.dataset)
-    opt.tb_path = './save_{}_{}/{}_tensorboard'.format(opt.replay_policy, opt.mem_size, opt.dataset)
-    opt.log_path = './save_{}_{}/logs'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.model_path = './save_{}_{}/{}_models/'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.tb_path = './save_{}_{}/{}_tensorboard/'.format(opt.replay_policy, opt.mem_size, opt.dataset)
+    opt.log_path = './save_{}_{}/logs/{}'.format(opt.replay_policy, opt.mem_size, opt.dataset)
 
     iterations = opt.lr_decay_epochs.split(',')
     opt.lr_decay_epochs = list([])
     for it in iterations:
         opt.lr_decay_epochs.append(int(it))
 
-    opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_{}_{}_{}_{}_{}'.\
-        format(opt.dataset, opt.size, opt.model, opt.learning_rate,
-               opt.weight_decay, opt.batch_size, opt.temp,
-               opt.trial,
-               opt.start_epoch if opt.start_epoch is not None else opt.epochs, opt.epochs,
-               opt.current_temp,
-               opt.past_temp,
-               opt.distill_power
-               )
+    # opt.model_name = '{}_{}_{}_lr_{}_decay_{}_bsz_{}_temp_{}_trial_{}_{}_{}_{}_{}_{}'.\
+    #     format(opt.dataset, opt.size, opt.model, opt.learning_rate,
+    #            opt.weight_decay, opt.batch_size, opt.temp,
+    #            opt.trial,
+    #            opt.start_epoch if opt.start_epoch is not None else opt.epochs, opt.epochs,
+    #            opt.current_temp,
+    #            opt.past_temp,
+    #            opt.distill_power
+    #            )
+    opt.model_name = opt.notes
 
     if opt.cosine:
         opt.model_name = '{}_cosine'.format(opt.model_name)
@@ -180,9 +186,9 @@ def parse_option():
         else:
             opt.warmup_to = opt.learning_rate
 
-    opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
-    if not os.path.isdir(opt.tb_folder):
-        os.makedirs(opt.tb_folder)
+    # opt.tb_folder = os.path.join(opt.tb_path, opt.model_name)
+    # if not os.path.isdir(opt.tb_folder):
+    #     os.makedirs(opt.tb_folder)
 
     opt.save_folder = os.path.join(opt.model_path, opt.model_name)
     if not os.path.isdir(opt.save_folder):

@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import os
 import copy
+import re
 import sys
 import argparse
 import shutil
@@ -117,7 +118,9 @@ def parse_option():
     opt = parser.parse_args()
 
     opt.save_freq = opt.epochs // 2
+    # detail setting
     opt.trial = opt.seed
+    opt.method = re.search(r'^(.*?)\d+_\d', opt.notes).group(1)
 
 
     if opt.dataset == 'cifar10':
@@ -430,7 +433,7 @@ def set_model(opt):
     return model, criterion
 
 
-def partial_mixup(input: torch.Tensor,
+def partial_mixup_exclusive(input: torch.Tensor,
                   gamma: float,
                   indices: torch.Tensor,
                   diff_indices: torch.Tensor
@@ -464,8 +467,8 @@ def train(train_loader, model, model2, criterion, optimizer, epoch, opt):
         # 데이터를 서로 다른 클래스의 데이터와 MixUp하기 위한 인덱스 생성
         permuted_indices = torch.randperm(images[0].size(0))
         diff_class_indices = labels != labels[permuted_indices]
-        neg_images0 = partial_mixup(input=images[0], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
-        neg_images1 = partial_mixup(input=images[1], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
+        neg_images0 = partial_mixup_exclusive(input=images[0], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
+        neg_images1 = partial_mixup_exclusive(input=images[1], gamma=0.5, indices=permuted_indices, diff_indices=diff_class_indices)
         images[0], images[1] = torch.cat([images[0], neg_images0], dim=0), torch.cat([images[1], neg_images1], dim=0)
         neg_labels = torch.ones(neg_images0.size(0), dtype=torch.long).fill_(
             (opt.target_task+1) * opt.cls_per_task

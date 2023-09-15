@@ -98,7 +98,9 @@ def parse_option():
 
     # set the path according to the environment
     opt.data_folder = '~/data/'
+    # detail setting
     opt.trial = opt.seed
+    opt.method = re.search(r'^(.*?)\d+_\d', opt.notes).group(1)
 
     opt.tb_folder = os.path.join(opt.ckpt, 'tensorboard', 'linear_all')
 
